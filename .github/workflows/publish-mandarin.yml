@@ -1,0 +1,46 @@
+name: Publish completed Mandarin listening update
+on:
+  workflow_run:
+    workflows: [Build concise Mandarin listening]
+    types: [completed]
+permissions: {}
+jobs:
+  release:
+    if: >-
+      github.event.workflow_run.id == 43711809511 &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate and merge the completed build
+        run: |
+          git fetch --no-tags origin refs/heads/concise-mandarin-43711809511
+          git diff --name-only HEAD...FETCH_HEAD > new-files.txt
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import re
+          paths = Path('new-files.txt').read_text().splitlines()
+          tracks = [path for path in paths if re.fullmatch(r'voice-v1/\d+-(stem|question|answer|detail)\.mp3', path)]
+          assert len(tracks) == 3981, len(tracks)
+          assert set(paths) == set(tracks) | {'index.html', 'voice-v1/SOURCE.txt'}
+          PYTHON
+          git show FETCH_HEAD:index.html > built-index.html
+          node -e 'const s=require("fs").readFileSync("built-index.html","utf8"); if (!s.includes("const recordedThrough = 1307;") || !s.includes("const tracks=[\x27stem\x27,\x27answer\x27];")) process.exit(1);'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git merge --no-ff --no-edit FETCH_HEAD
+          git push origin HEAD:main
+      - name: Request the existing GitHub Pages build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds"
