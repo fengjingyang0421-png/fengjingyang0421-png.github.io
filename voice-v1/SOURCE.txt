@@ -1,0 +1,2 @@
+Voice synthesized with Kokoro-82M-v1.1-zh (Apache-2.0).
+https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh
