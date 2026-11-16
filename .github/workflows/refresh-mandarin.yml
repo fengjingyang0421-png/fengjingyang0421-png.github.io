@@ -1,0 +1,285 @@
+name: Refresh Mandarin narration
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: warm-mandarin-narration
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate playback and generate narration texts
+        run: |
+          test "$(git hash-object index.html)" = '9469829a7b4e8a41a280a59fe2b5f22fd432c0d1'
+          mkdir voice-build
+          cat > voice-build/build.cjs <<'JAVASCRIPT'
+          const fs=require('node:fs');
+          const base=fs.readFileSync('index.html','utf8');
+          const page=base.replace("?v=filled-1","?v=warm-2").replace("+'"+".mp3'\n      : recordingBase","+'.mp3?v=warm-2'\n      : recordingBase");
+          if(!page.includes("judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'"))throw Error('Missing evaluation version');
+          function playbackTest(page){
+          const bank=page.match(/<script id="embedded-bank" type="application\/json">([\s\S]*?)<\/script>/)[1];
+          const element={innerHTML:'',textContent:bank};
+          const doc={querySelector:()=>element,querySelectorAll:()=>[],addEventListener(){}};
+          const timers=new Map();let n=0;let player;
+          class Player{constructor(){player=this;} play(){this.onplaying?.(); return Promise.resolve();} pause(){} removeAttribute(){this.src='';} load(){}}
+          const run=new Function("document","window","localStorage","navigator","Audio",page.slice(page.indexOf('const BANK ='),page.lastIndexOf('</script>'))+
+          'const manifest=questions.map(q=>({id:q.id,judge:q.type.includes("判断"),original:q.stem,stem:narration(q).stem,answer:narration(q).answer}));return {manifest,state,playListen,jumpListen,app};');
+          const result=run(doc,{addEventListener(){},setTimeout(fn,ms){timers.set(++n,{fn,ms});return n;},clearTimeout(id){timers.delete(id);}}, {getItem:()=>JSON.stringify({settings:{listenGap:10,listenId:1}}),setItem(){}}, {},Player);
+          if(!result.app.innerHTML.includes('题间停顿 1 秒')||result.state.settings.listenGap!==1)throw Error('Legacy settings not overridden');
+          if(result.manifest.length!==1307||result.manifest.some(q=>q.stem.includes('空白处')))throw Error('Bank speech validation');
+          if(result.manifest.some(q=>q.judge&&!['正确','错误'].includes(q.answer)))throw Error('Unsupported judgment answer');
+          result.playListen();if(!player.src.includes('1-stem.mp3'))throw Error('Incorrect first track');player.onended();
+          const gap=[...timers.values()].find(x=>x.ms===1000);if(!gap)throw Error('Incorrect gap');gap.fn();
+          if(!player.src.includes('2-stem.mp3'))throw Error('Auto-next failed');
+          result.jumpListen(1307);result.playListen();player.onended();if(!player.src.includes('judgement-'))throw Error('Missing judgment cue');
+          player.onended();if(!result.app.innerHTML.includes('最后一题'))throw Error('End of bank handling');
+          return result.manifest;
+          }
+          const manifest=playbackTest(page).map(q=>({id:q.id,stem:q.stem}));
+          if(manifest.length!==1307)throw Error('Unexpected question count');
+          manifest.push({id:1308,stem:'正确。'},{id:1309,stem:'错误。'});
+          fs.writeFileSync('voice-build/index.html',page);
+          fs.writeFileSync('voice-build/manifest.json',JSON.stringify(manifest));
+          JAVASCRIPT
+          cat > voice-build/render.py <<'PYTHON'
+          """Render static MP3 files for the original question bank with Kokoro Mandarin."""
+          import argparse
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import subprocess
+          import time
+          
+          os.environ.setdefault('HF_HUB_DISABLE_XET', '1')
+          import numpy as np
+          import torch
+          from kokoro import KModel, KPipeline
+          
+          REPO = 'hexgrad/Kokoro-82M-v1.1-zh'
+          SAMPLE_RATE = 24000
+          VOICE = 'zf_002'
+          
+          
+          def phrases(text):
+              """Keep the question number with its stem and split only at meaningful breaks."""
+              text = re.sub(r'^(第\s*\d+\s*题)[。．]\s*', r'\1，', text.strip())
+              match = re.search(r'。?\s*选\s*([A-Z])。?$', text)
+              option = match.group(1) if match else None
+              if match:
+                  text = text[:match.start()].rstrip('，。 ')
+              text = text.replace(',', '，').replace(';', '；')
+              groups = re.findall(r'[^。！？；]+[。！？；]*', text)
+              for group in groups:
+                  group = group.strip()
+                  while len(group) > 58:
+                      candidates = [i + 1 for i, ch in enumerate(group[:58]) if i >= 22 and ch in '，、']
+                      if candidates:
+                          end = candidates[-1]
+                      else:
+                          end = 54
+                          # Keep numbers, fractions and Latin abbreviations together.
+                          while end > 34 and re.match(r'[0-9A-Za-z./·－-]', group[end-1]) and re.match(r'[0-9A-Za-z./·－-]', group[end]):
+                              end -= 1
+                      yield group[:end], 0.93, 0.075
+                      group = group[end:].lstrip('，、 ')
+                  if group:
+                      yield group, 0.93, 0.135 if group[-1] in '。！？；' else 0.10
+              if option:
+                  yield '选 ' + option + '。', 0.90, 0.0
+          
+          
+          def trim_edges(audio):
+              """Remove excessive model padding but keep a soft lead-in and consonant tail."""
+              x = np.asarray(audio, dtype=np.float32)
+              active = np.flatnonzero(np.abs(x) > max(0.005, float(np.max(np.abs(x))) * 0.022))
+              if not len(active):
+                  return x
+              return x[max(0,active[0]-int(.055*SAMPLE_RATE)):min(len(x),active[-1]+int(.075*SAMPLE_RATE))]
+          
+          
+          def render(pipeline, script, dest):
+              if dest.exists():
+                  return
+              chunks = []
+              with torch.inference_mode():
+                  for phrase, speed, gap in phrases(script):
+                      spoken = []
+                      for part in pipeline(phrase, voice=VOICE, speed=speed):
+                          if part.audio is not None and len(part.audio):
+                              spoken.append(trim_edges(part.audio.numpy()))
+                      if not spoken:
+                          raise RuntimeError(f'Skipped phrase in {dest.name}: {phrase}')
+                      chunks.extend(spoken)
+                      if gap:
+                          chunks.append(np.zeros(int(SAMPLE_RATE * gap), dtype=np.float32))
+              if not chunks:
+                  raise RuntimeError(f'No audio generated for {dest.name}')
+              audio = np.concatenate(chunks)
+              audible = audio[np.abs(audio) > 0.009]
+              if not len(audible):
+                  raise RuntimeError(f'Silent track: {dest.name}')
+              rms = float(np.sqrt(np.mean(audible**2)))
+              peak = float(np.max(np.abs(audio)))
+              gain = min(1.5, 0.89 / peak, 0.14 / rms)
+              audio *= gain
+              tmp = dest.with_suffix('.tmp.mp3')
+              subprocess.run(['ffmpeg','-loglevel','error','-nostdin','-y','-threads','1','-f','f32le','-ar',str(SAMPLE_RATE),'-ac','1','-i','-','-c:a','libmp3lame','-b:a','48k',str(tmp)], input=audio.astype('<f4').tobytes(), check=True)
+              tmp.replace(dest)
+          
+          
+          def main():
+              parser = argparse.ArgumentParser()
+              parser.add_argument('manifest', type=Path)
+              parser.add_argument('output', type=Path)
+              parser.add_argument('--start', type=int, default=1)
+              parser.add_argument('--end', type=int, default=1000000)
+              parser.add_argument('--threads', type=int, default=2)
+              parser.add_argument('--model-dir', type=Path)
+              parser.add_argument('--kinds', nargs='+', choices=('stem','question','answer','detail'), default=('stem','question','answer','detail'))
+              args = parser.parse_args()
+              args.output.mkdir(parents=True, exist_ok=True)
+              torch.set_num_threads(args.threads)
+              torch.set_num_interop_threads(1)
+              english = KPipeline(lang_code='a', repo_id=REPO, model=False)
+              files = {'config': str(args.model_dir / 'config.json'), 'model': str(args.model_dir / 'kokoro-v1_1-zh.pth')} if args.model_dir else {}
+              model = KModel(repo_id=REPO, **files).cpu().eval()
+              letter_phonemes = {'A': 'ˈA', 'B': 'bˈi', 'C': 'sˈi', 'D': 'dˈi'}
+              def english_phonemes(text):
+                  key=text.strip().upper()
+                  return letter_phonemes[key] if key in letter_phonemes else next(english(text)).phonemes
+              pipeline = KPipeline(lang_code='z', repo_id=REPO, model=model, en_callable=english_phonemes, device='cpu')
+              for letter, expected in letter_phonemes.items():
+                  actual=pipeline.g2p('选 '+letter+'。')[0]
+                  if expected not in actual:
+                      raise RuntimeError(f'Letter pronunciation mismatch for {letter}: {actual}')
+                  print(f'Validated letter {letter}: {actual}', flush=True)
+              if args.model_dir:
+                  pipeline.voices[VOICE] = torch.load(args.model_dir / 'voices' / f'{VOICE}.pt', weights_only=True)
+              start = time.monotonic()
+              for q in json.loads(args.manifest.read_text()):
+                  if args.start <= q['id'] <= args.end:
+                      for kind in args.kinds:
+                          if q[kind]:
+                              render(pipeline, q[kind], args.output / f'{q["id"]}-{kind}.mp3')
+                      if q['id'] % 25 == 0 or q['id'] < 5:
+                          print(f'{q["id"]}: {time.monotonic() - start:.1f}s', flush=True)
+          
+          
+          if __name__ == '__main__':
+              main()
+          PYTHON
+          node voice-build/build.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warm-source
+          path: voice-build
+          retention-days: 1
+  render:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        batch: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: warm-source
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install the existing Mandarin voice and audio encoder
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y ffmpeg espeak-ng
+          pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.15.0'
+          pip install 'kokoro==0.9.4' 'misaki[zh]==0.9.4' soundfile
+      - name: Download and verify the voice model
+        env:
+          MODEL_REPO: https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/resolve/main
+        run: |
+          mkdir -p model/voices
+          for file in config.json voices/zf_002.pt kokoro-v1_1-zh.pth; do
+            curl -fSL --retry 3 "$MODEL_REPO/$file" -o "model/$file"
+          done
+          echo "b1d8410fa44dfb5c15471fd6c4225ea6b4e9ac7fa03c98e8bea47a9928476e2b  model/kokoro-v1_1-zh.pth" | sha256sum --check
+      - name: Render updated narration
+        env:
+          BATCH: ${{ matrix.batch }}
+        run: |
+          python - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          rows=json.loads(Path('manifest.json').read_text())
+          batch=int(os.environ['BATCH'])
+          Path('batch.json').write_text(json.dumps(rows[batch*82:(batch+1)*82],ensure_ascii=False))
+          PYTHON
+          python render.py batch.json rendered --model-dir model --kinds stem
+      - uses: actions/upload-artifact@v4
+        with:
+          name: warm-tracks-${{ matrix.batch }}
+          path: rendered/*.mp3
+          retention-days: 1
+          compression-level: 0
+  publish:
+    needs: render
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/download-artifact@v4
+        with:
+          name: warm-source
+          path: voice-build
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: warm-tracks-*
+          merge-multiple: true
+          path: updated-tracks
+      - name: Verify audio coverage and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(git hash-object index.html)" = '9469829a7b4e8a41a280a59fe2b5f22fd432c0d1'
+          python - <<'PYTHON'
+          from pathlib import Path
+          import base64, json, re, shutil
+          manifest=json.loads(Path('voice-build/manifest.json').read_text())
+          tracks=Path('updated-tracks')
+          expected={f'{q["id"]}-stem.mp3' for q in manifest}
+          found={p.name for p in tracks.glob('*.mp3') if p.stat().st_size>1000}
+          assert len(expected)==1309 and expected==found
+          for name in sorted(expected):
+              dest={'1308-stem.mp3':'judgement-right.mp3','1309-stem.mp3':'judgement-wrong.mp3'}.get(name,name)
+              shutil.copyfile(tracks/name,Path('voice-v1')/dest)
+          shutil.copyfile('voice-build/index.html','index.html')
+          preview=Path('voice-preview.html')
+          html=preview.read_text()
+          media=re.search(r'<audio[^>]*src="data:audio/mpeg;base64,[A-Za-z0-9+/=]+"[^>]*></audio>',html)
+          assert media
+          updated=base64.b64encode((tracks/'1-stem.mp3').read_bytes()).decode()
+          new_audio=re.sub(r'(data:audio/mpeg;base64,)[A-Za-z0-9+/=]+',lambda m:m[1]+updated,media.group())
+          html=html.replace(media.group(),'<p><strong>新版</strong></p>'+new_audio+'<p><strong>上一版</strong></p>'+media.group(),1)
+          examples = '<h2>选项字母试听</h2>' + ''.join(
+              f'<p>第 {i} 题 · 选 {letter}</p><audio controls preload="none" src="./voice-v1/{i}-stem.mp3?v=warm-2"></audio>'
+              for i, letter in [(5,'A'),(1,'B'),(2,'C')])
+          html=html.replace('</main>',examples+'</main>',1)
+          preview.write_text(html)
+          PYTHON
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html voice-preview.html voice-v1
+          git commit -m 'Refine Mandarin voice and pause timing for all listening questions'
+          git push origin HEAD:main
+          gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds"
