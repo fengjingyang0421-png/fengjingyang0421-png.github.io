@@ -167,6 +167,12 @@ function speakingText(text){
     .replace(/[（(]\s*[）)]|[＿_]{2,}/g,'')
     .replace(/(\d+)\s*\/\s*(\d+)/g,'$2分之$1')
     .replace(/(\d+(?:\.\d+)?)\s*%/g,'百分之$1')
+    .replace(/(\d)\s*(mm|cm|m)[²2](?![A-Za-z0-9])/g,(_,n,u)=>n+'平方'+({mm:'毫米',cm:'厘米',m:'米'})[u])
+    .replace(/(\d)\s*m[\/／]s(?![A-Za-z])/g,'$1米每秒')
+    .replace(/(\d)\s*r[\/／]min(?![A-Za-z])/gi,'$1转每分钟')
+    .replace(/(\d)\s*rad[\/／]s(?![A-Za-z])/gi,'$1弧度每秒')
+    .replace(/(\d)\s*mA[·⋅][sS](?![A-Za-z])/g,'$1毫安秒')
+    .replace(/(\d)\s*(m|s|N|T)(?![A-Za-z0-9²])/g,(_,n,u)=>n+({m:'米',s:'秒',N:'牛顿',T:'特斯拉'})[u])
     .replace(/(\d+(?:\.\d+)?)\s*(MΩ|kΩ|Ω|MHz|Hz|kV|mV|kA|mA|kW|V|W|A|mm|cm|min|℃)(?![A-Za-z])/g,(_,n,u)=>n+(u==='A'?pronunciation.Aunit:pronunciation[u]))
     .replace(/(^|[。！？；\n])\s*([A-F])[.．、](?=\s*\D)/g,(_,p,l)=>p+pronunciation[l]+'项，')
     .replace(/[\r\n]+/g,'。').replace(/，{2,}/g,'，').trim();
@@ -295,14 +301,21 @@ function narration(q){
   const judge=q.type.includes('判断');
   const answerIndex=q.answer[0];
   const choice=letters[answerIndex];
-  const correctContent=q.optionImages?.[answerIndex]?'图中所示':q.options[answerIndex];
-  const spokenStem=judge?q.stem:q.stem.replace(/[（(]\s*[）)]|[＿_]{2,}/g,()=>correctContent);
-  const spokenQuestion='第 '+q.id+' 题。'+spokenStem+(q.needsImage?'。请看屏幕上的图。':'');
-  const answer=q.answer.map(i=>q.type.includes('判断')?q.options[i]:
-    '选 '+letters[i]+'，'+(q.optionImages?.[i]?'对应的图形':q.options[i])).join('。');
+  const answerText=q.options[answerIndex];
+  const imageAnswer=!judge&&(q.optionImages?.[answerIndex]||!answerText||answerText===choice||answerText==='选项'+choice);
+  const correctContent=imageAnswer?choice+' 图':answerText;
+  const blank=/[（(]\s*[）)]|[＿_]{2,}/g;
+  let spokenQuestion=q.stem;
+  if(judge){
+    spokenQuestion=spokenQuestion.replace(/[。！？?；;]+$/,'')+'。这句话是'+(answerText==='正确'?'对的':'错的')+'。';
+  }else if(blank.test(q.stem)){
+    spokenQuestion=q.stem.replace(blank,()=>correctContent);
+  }else{
+    spokenQuestion=spokenQuestion.replace(/[。！？?；;]+$/,'')+'。答案是'+correctContent+'。';
+  }
   const note=explanation(q);
   return {
-    stem:speakingText(spokenQuestion+(judge?'':'。选 '+choice+'。')).replace(/。{2,}/g,'。'),
+    stem:speakingText(spokenQuestion).replace(/。{2,}/g,'。'),
     question:speakingText(parts.join('。')).replace(/。{2,}/g,'。'),
     answer:judge?speakingText(q.options[answerIndex]):speakingText('选 '+choice+'。'),
     detail:note?speakingText('来看解析。'+note.replace(/^[A-F][。．.、]\s*/,'')):''
@@ -339,9 +352,10 @@ function playNarration(q,kinds,hooks={},mode=state.settings.voiceMode){
     clearHandlers();
     const kind=tracks[index];
     if(kind==='detail'&&!q.explanation&&!extras.has(q.id)){useSystemVoice();return;}
-    const source=kind==='answer'&&q.type.includes('判断')
-      ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'
-      : recordingBase+q.id+'-'+kind+'.mp3'+(kind==='stem'?'?v=warm-2':'');
+    const source=kind==='stem'?'./voice-inline/'+q.id+'.mp3'
+      : kind==='answer'&&q.type.includes('判断')
+        ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'
+        : recordingBase+q.id+'-'+kind+'.mp3';
     announceSpeech('正在加载自然普通话…');
     const watch=()=>{clearTimer();timer=window.setTimeout(useSystemVoice,12000);};
     player.onwaiting=watch;
@@ -517,10 +531,9 @@ function playListen(){
   const q=listenQuestion();if(!q)return;
   window.clearTimeout(listenTimer);listenTimer=null;
   if(listenCursor===1){advanceListen(1,true);return;}
-  const tracks=q.type.includes('判断')?['stem','answer']:['stem'];
   listenStatus='playing';soundReady=true;
   state.settings.listenId=q.id;save();render();requestWake();
-  playNarration(q,tracks,{
+  playNarration(q,['stem'],{
     onEnd:()=>{
       if(tab!=='listen'||listenStatus!=='playing')return;
       listenCursor=1;
@@ -559,7 +572,7 @@ function listenView(){
 }
 
 function render(){
-  const head='<div class="section-head"><h1>听题模式</h1><p>题干填入正确答案，播完停 1 秒进入下一题。</p></div>';
+  const head='<div class="section-head"><h1>听题模式</h1><p>直接听带答案的题目，读完 1 秒后自动播放下一题。</p></div>';
   const alert=storageMessage?'<p class="notice">'+escapeHtml(storageMessage)+'</p>':'';
   app.innerHTML=alert+head+listenView();
 }
