@@ -1,4 +1,4 @@
-name: Render inline Mandarin narration
+name: Render numbered Mandarin narration
 on:
   workflow_dispatch:
 permissions:
@@ -13,17 +13,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate playback and generate narration texts
         run: |
-          test "$(git hash-object index.html)" = '67c5f8f9e974c298d7aac376d13e4ca5e940e1a2'
+          test "$(git hash-object index.html)" = 'adf6defd3c513cbe69212858987e963b8e39c26e'
           mkdir voice-build
           cat > voice-build/build.cjs <<'JAVASCRIPT'
           const fs=require('node:fs');
           let page=fs.readFileSync('index.html','utf8');
           const updates=[
-            ["    .replace(/(\\d+(?:\\.\\d+)?)\\s*(MΩ|kΩ|Ω|MHz|Hz|kV|mV|kA|mA|kW|V|W|A|mm|cm|min|℃)(?![A-Za-z])/g,(_,n,u)=>n+(u==='A'?pronunciation.Aunit:pronunciation[u]))","    .replace(/(\\d)\\s*(mm|cm|m)[²2](?![A-Za-z0-9])/g,(_,n,u)=>n+'平方'+({mm:'毫米',cm:'厘米',m:'米'})[u])\n    .replace(/(\\d)\\s*m[\\/／]s(?![A-Za-z])/g,'$1米每秒')\n    .replace(/(\\d)\\s*r[\\/／]min(?![A-Za-z])/gi,'$1转每分钟')\n    .replace(/(\\d)\\s*rad[\\/／]s(?![A-Za-z])/gi,'$1弧度每秒')\n    .replace(/(\\d)\\s*mA[·⋅][sS](?![A-Za-z])/g,'$1毫安秒')\n    .replace(/(\\d)\\s*(m|s|N|T)(?![A-Za-z0-9²])/g,(_,n,u)=>n+({m:'米',s:'秒',N:'牛顿',T:'特斯拉'})[u])\n    .replace(/(\\d+(?:\\.\\d+)?)\\s*(MΩ|kΩ|Ω|MHz|Hz|kV|mV|kA|mA|kW|V|W|A|mm|cm|min|℃)(?![A-Za-z])/g,(_,n,u)=>n+(u==='A'?pronunciation.Aunit:pronunciation[u]))"],
-            ["  const correctContent=q.optionImages?.[answerIndex]?'图中所示':q.options[answerIndex];\n  const spokenStem=judge?q.stem:q.stem.replace(/[（(]\\s*[）)]|[＿_]{2,}/g,()=>correctContent);\n  const spokenQuestion='第 '+q.id+' 题。'+spokenStem+(q.needsImage?'。请看屏幕上的图。':'');\n  const answer=q.answer.map(i=>q.type.includes('判断')?q.options[i]:\n    '选 '+letters[i]+'，'+(q.optionImages?.[i]?'对应的图形':q.options[i])).join('。');\n  const note=explanation(q);\n  return {\n    stem:speakingText(spokenQuestion+(judge?'':'。选 '+choice+'。')).replace(/。{2,}/g,'。'),\n    question:speakingText(parts.join('。')).replace(/。{2,}/g,'。'),","  const answerText=q.options[answerIndex];\n  const imageAnswer=!judge&&(q.optionImages?.[answerIndex]||!answerText||answerText===choice||answerText==='选项'+choice);\n  const correctContent=imageAnswer?choice+' 图':answerText;\n  const blank=/[（(]\\s*[）)]|[＿_]{2,}/g;\n  let spokenQuestion=q.stem;\n  if(judge){\n    spokenQuestion=spokenQuestion.replace(/[。！？?；;]+$/,'')+'。这句话是'+(answerText==='正确'?'对的':'错的')+'。';\n  }else if(blank.test(q.stem)){\n    spokenQuestion=q.stem.replace(blank,()=>correctContent);\n  }else{\n    spokenQuestion=spokenQuestion.replace(/[。！？?；;]+$/,'')+'。答案是'+correctContent+'。';\n  }\n  const note=explanation(q);\n  return {\n    stem:speakingText(spokenQuestion).replace(/。{2,}/g,'。'),\n    question:speakingText(parts.join('。')).replace(/。{2,}/g,'。'),"],
-            ["    const source=kind==='answer'&&q.type.includes('判断')\n      ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'\n      : recordingBase+q.id+'-'+kind+'.mp3'+(kind==='stem'?'?v=warm-2':'');\n    announceSpeech('正在加载自然普通话…');","    const source=kind==='stem'?'./voice-inline/'+q.id+'.mp3'\n      : kind==='answer'&&q.type.includes('判断')\n        ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'\n        : recordingBase+q.id+'-'+kind+'.mp3';\n    announceSpeech('正在加载自然普通话…');"],
-            ["  const tracks=q.type.includes('判断')?['stem','answer']:['stem'];\n  listenStatus='playing';soundReady=true;\n  state.settings.listenId=q.id;save();render();requestWake();\n  playNarration(q,tracks,{\n    onEnd:()=>{","  listenStatus='playing';soundReady=true;\n  state.settings.listenId=q.id;save();render();requestWake();\n  playNarration(q,['stem'],{\n    onEnd:()=>{"],
-            ["  const head='<div class=\"section-head\"><h1>听题模式</h1><p>题干填入正确答案，播完停 1 秒进入下一题。</p></div>';\n  const alert=storageMessage?'<p class=\"notice\">'+escapeHtml(storageMessage)+'</p>':'';","  const head='<div class=\"section-head\"><h1>听题模式</h1><p>直接听带答案的题目，读完 1 秒后自动播放下一题。</p></div>';\n  const alert=storageMessage?'<p class=\"notice\">'+escapeHtml(storageMessage)+'</p>':'';"]
+            ["function narration(q){","function narration(q,markChoice=false){"],
+            ["  const correctContent=imageAnswer?choice+' 图':answerText;","  const spokenChoice=markChoice&&choice?' zzpick'+choice.toLowerCase()+'zz ':choice;\n  const correctContent=imageAnswer?spokenChoice+' 图':[spokenChoice,answerText].filter(Boolean).join(' ');"],
+            ["    stem:speakingText(spokenQuestion).replace(/。{2,}/g,'。'),","    stem:speakingText('第'+q.id+'题，'+spokenQuestion).replace(/。{2,}/g,'。'),"],
+            ["    const source=kind==='stem'?'./voice-inline/'+q.id+'.mp3'","    const source=kind==='stem'?'./voice-numbered/'+q.id+'.mp3'"],
+            ["直接听带答案的题目，读完 1 秒后自动播放下一题。","先报题号，正确选项和答案随题干一起读。读完 1 秒后自动播放下一题。"],
+            ["    .replace(/(\\d+)\\s*\\/\\s*(\\d+)/g,'$2分之$1')","    .replace(/(?<![A-Za-z\\d－-])(\\d+)\\s*\\/\\s*(\\d+)(?![A-Za-z\\d])/g,'$2分之$1')"]
           ];
           for(const [before,after] of updates){
             if(page.split(before).length!==2)throw Error('Unexpected base page');
@@ -36,10 +37,13 @@ jobs:
           const timers=new Map();let n=0;let player;
           class Player{constructor(){player=this;} play(){this.onplaying?.(); return Promise.resolve();} pause(){} removeAttribute(){this.src='';} load(){}}
           const run=new Function("document","window","localStorage","navigator","Audio",page.slice(page.indexOf('const BANK ='),page.lastIndexOf('</script>'))+
-          'const manifest=questions.map(q=>({id:q.id,judge:q.type.includes("判断"),original:q.stem,stem:narration(q).stem,answer:narration(q).answer}));return {manifest,state,playListen,jumpListen,app};');
+          'const manifest=questions.map(q=>({id:q.id,judge:q.type.includes("判断"),letter:"ABCDEF"[q.answer[0]],plain:narration(q).stem,stem:narration(q,true).stem,answer:narration(q).answer}));return {manifest,state,playListen,jumpListen,app};');
           const result=run(doc,{addEventListener(){},setTimeout(fn,ms){timers.set(++n,{fn,ms});return n;},clearTimeout(id){timers.delete(id);}}, {getItem:()=>JSON.stringify({settings:{listenGap:10,listenId:1}}),setItem(){}}, {},Player);
           if(!result.app.innerHTML.includes('题间停顿 1 秒')||result.state.settings.listenGap!==1)throw Error('Legacy settings not overridden');
-          if(result.manifest.length!==1307||result.manifest.some(q=>/空白处|选 [A-F]。$|^第 \d+ 题/.test(q.stem)))throw Error('Bank speech validation');
+          if(result.manifest.length!==1307||result.manifest.some(q=>!q.plain.startsWith('第'+q.id+'题，')||/空白处|选 [A-F]。$/.test(q.plain)))throw Error('Bank speech validation');
+          const choices=result.manifest.filter(q=>!q.judge);
+          if(choices.length!==575||choices.some(q=>(q.stem.match(/zzpick[a-z]zz/g)||[]).join()!=='zzpick'+q.letter.toLowerCase()+'zz'))throw Error('Answer letter mismatch');
+          if(choices.find(q=>q.id===61)?.plain!=='第61题，磁体不会吸引C 铜。')throw Error('Question 61 wording mismatch');
           if(result.manifest.filter(q=>q.judge).length!==732||result.manifest.some(q=>q.judge&&!q.stem.endsWith(q.answer==='正确'?'这句话是对的。':'这句话是错的。')))throw Error('Judgment must be spoken in the same clip');
           if(result.manifest.some(q=>q.judge&&!['正确','错误'].includes(q.answer)))throw Error('Unsupported judgment answer');
           result.playListen();if(!player.src.endsWith('/1.mp3'))throw Error('Incorrect first track');player.onended();
@@ -48,7 +52,7 @@ jobs:
           result.jumpListen(1307);result.playListen();if(!player.src.endsWith('/1307.mp3'))throw Error('Missing last track');player.onended();if(!result.app.innerHTML.includes('最后一题'))throw Error('End of bank handling');
           return result.manifest;
           }
-          const manifest=playbackTest(page).map(q=>({id:q.id,stem:q.stem}));
+          const manifest=playbackTest(page).map(q=>({id:q.id,stem:q.stem,letter:q.judge?null:q.letter}));
           if(manifest.length!==1307)throw Error('Unexpected question count');
           fs.writeFileSync('voice-build/index.html',page);
           fs.writeFileSync('voice-build/manifest.json',JSON.stringify(manifest));
@@ -64,6 +68,7 @@ jobs:
           import time
           
           os.environ.setdefault('HF_HUB_DISABLE_XET', '1')
+          from cn2an import an2cn
           import numpy as np
           import torch
           from kokoro import KModel, KPipeline
@@ -138,7 +143,6 @@ jobs:
               parser.add_argument('--end', type=int, default=1000000)
               parser.add_argument('--threads', type=int, default=2)
               parser.add_argument('--model-dir', type=Path)
-              parser.add_argument('--kinds', nargs='+', choices=('stem','question','answer','detail'), default=('stem','question','answer','detail'))
               args = parser.parse_args()
               args.output.mkdir(parents=True, exist_ok=True)
               torch.set_num_threads(args.threads)
@@ -147,23 +151,41 @@ jobs:
               files = {'config': str(args.model_dir / 'config.json'), 'model': str(args.model_dir / 'kokoro-v1_1-zh.pth')} if args.model_dir else {}
               model = KModel(repo_id=REPO, **files).cpu().eval()
               letter_phonemes = {'A': 'ˈA', 'B': 'bˈi', 'C': 'sˈi', 'D': 'dˈi'}
+              marked_letter = re.compile(r'(zzpick[a-d]zz)', re.IGNORECASE)
+              spoken_letters = []
+          
               def english_phonemes(text):
-                  key=text.strip().upper()
-                  return letter_phonemes[key] if key in letter_phonemes else next(english(text)).phonemes
+                  phonemes = []
+                  for segment in marked_letter.split(text):
+                      if marked_letter.fullmatch(segment):
+                          letter = segment[6].upper()
+                          spoken_letters.append(letter)
+                          phonemes.append(letter_phonemes[letter])
+                      elif segment.strip():
+                          key = segment.strip().upper()
+                          phonemes.append(letter_phonemes[key] if key in letter_phonemes else next(english(segment)).phonemes)
+                  return ' '.join(phonemes)
+          
               pipeline = KPipeline(lang_code='z', repo_id=REPO, model=model, en_callable=english_phonemes, device='cpu')
               for letter, expected in letter_phonemes.items():
-                  actual=pipeline.g2p(letter+' 图。')[0]
-                  if expected not in actual:
+                  actual = pipeline.g2p('第六十一题，磁体不会吸引 zzpick'+letter.lower()+'zz 铜。')[0]
+                  if spoken_letters != [letter] or expected not in actual:
                       raise RuntimeError(f'Letter pronunciation mismatch for {letter}: {actual}')
+                  spoken_letters.clear()
                   print(f'Validated letter {letter}: {actual}', flush=True)
               if args.model_dir:
                   pipeline.voices[VOICE] = torch.load(args.model_dir / 'voices' / f'{VOICE}.pt', weights_only=True)
               start = time.monotonic()
               for q in json.loads(args.manifest.read_text()):
                   if args.start <= q['id'] <= args.end:
-                      for kind in args.kinds:
-                          if q[kind]:
-                              render(pipeline, q[kind], args.output / f'{q["id"]}.mp3')
+                      script = re.sub(r'^第(\d+)题，', lambda m: '第'+an2cn(m[1])+'题，', q['stem'], count=1)
+                      expected = [q['letter']] if q['letter'] else []
+                      spoken_letters.clear()
+                      render(pipeline, script, args.output / f'{q["id"]}.mp3')
+                      if spoken_letters != expected:
+                          raise RuntimeError(f'Question {q["id"]}: expected {expected}, recorded {spoken_letters}')
+                      if q['id'] == 61:
+                          print('Validated question 61 '+script.replace(' zzpickczz  ', 'C '), flush=True)
                       if q['id'] % 25 == 0 or q['id'] < 5:
                           print(f'{q["id"]}: {time.monotonic() - start:.1f}s', flush=True)
           
@@ -174,7 +196,7 @@ jobs:
           node voice-build/build.cjs
       - uses: actions/upload-artifact@v4
         with:
-          name: inline-source
+          name: numbered-source
           path: voice-build
           retention-days: 1
   render:
@@ -184,11 +206,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        batch: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        batch: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: inline-source
+          name: numbered-source
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -197,7 +219,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y ffmpeg espeak-ng
           pip install --index-url https://download.pytorch.org/whl/cpu 'torch==2.15.0'
-          pip install 'kokoro==0.9.4' 'misaki[zh]==0.9.4' soundfile
+          pip install 'kokoro==0.9.4' 'misaki[zh]==0.9.4' 'cn2an==0.5.23' soundfile
       - name: Download and verify the voice model
         env:
           MODEL_REPO: https://huggingface.co/hexgrad/Kokoro-82M-v1.1-zh/resolve/main
@@ -216,12 +238,12 @@ jobs:
           from pathlib import Path
           rows=json.loads(Path('manifest.json').read_text())
           batch=int(os.environ['BATCH'])
-          Path('batch.json').write_text(json.dumps(rows[batch*82:(batch+1)*82],ensure_ascii=False))
+          Path('batch.json').write_text(json.dumps(rows[batch*94:(batch+1)*94],ensure_ascii=False))
           PYTHON
-          python render.py batch.json rendered --model-dir model --kinds stem
+          python render.py batch.json rendered --model-dir model
       - uses: actions/upload-artifact@v4
         with:
-          name: inline-tracks-${{ matrix.batch }}
+          name: numbered-tracks-${{ matrix.batch }}
           path: rendered/*.mp3
           retention-days: 1
           compression-level: 0
@@ -238,18 +260,18 @@ jobs:
           ref: main
       - uses: actions/download-artifact@v4
         with:
-          name: inline-source
+          name: numbered-source
           path: voice-build
       - uses: actions/download-artifact@v4
         with:
-          pattern: inline-tracks-*
+          pattern: numbered-tracks-*
           merge-multiple: true
           path: updated-tracks
       - name: Verify audio coverage and publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(git hash-object index.html)" = '67c5f8f9e974c298d7aac376d13e4ca5e940e1a2'
+          test "$(git hash-object index.html)" = 'adf6defd3c513cbe69212858987e963b8e39c26e'
           python - <<'PYTHON'
           from pathlib import Path
           import json, re, shutil
@@ -258,29 +280,27 @@ jobs:
           expected={f'{q["id"]}.mp3' for q in manifest}
           found={p.name for p in tracks.glob('*.mp3') if p.stat().st_size>1000}
           assert len(expected)==1307 and expected==found
-          output=Path('voice-inline')
+          output=Path('voice-numbered')
           output.mkdir(exist_ok=True)
           for name in sorted(expected):
               shutil.copyfile(tracks/name,output/name)
           shutil.copyfile('voice-build/index.html','index.html')
           preview=Path('voice-preview.html')
           html=preview.read_text()
-          previous=re.search(r'<audio[^>]*src="data:audio/mpeg;base64,[A-Za-z0-9+/=]+"[^>]*></audio>',html)
-          assert previous
           samples = [
-              (1, '填空题 · 胶布宽度的二分之一'),
-              (36, '看图题 · 图号读进题干'),
-              (1307, '判断题 · 一段录音里读完题干和结论'),
+              (61, '第六十一题，磁体不会吸引 C 铜。'),
+              (1, '第 1 题 · 字母加分数'),
+              (1307, '第 1307 题 · 题号、题干和对错'),
           ]
-          content = '<h1>低压电工 · 普通话试听</h1><p>正确答案随题干一起读。每题读完停 1 秒。</p>'
+          content = '<h1>低压电工 · 普通话试听</h1><p>先报题号，再把正确选项的字母和答案一起读进题干。每题读完停 1 秒。</p>'
           for number, label in samples:
-              content += f'<p>第 {number} 题 · {label}</p><audio controls preload="none" aria-label="第 {number} 题新版音频" src="./voice-inline/{number}.mp3"></audio>'
-          content += '<p>第 1 题 · 上一版</p>'+previous.group()+'<p><a href="./?v=inline-3">返回听题网站</a></p>'
+              content += f'<p>{label}</p><audio controls preload="none" aria-label="第 {number} 题音频" src="./voice-numbered/{number}.mp3"></audio>'
+          content += '<p><a href="./?v=numbered-4">返回听题网站</a></p>'
           preview.write_text(re.sub(r'(?<=<main>).*?(?=</main>)',lambda _:content,html,count=1,flags=re.DOTALL))
           PYTHON
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add index.html voice-preview.html voice-inline
-          git commit -m 'Read answers directly within the Mandarin questions'
+          git add index.html voice-preview.html voice-numbered
+          git commit -m 'Announce each question number and read the answer letter inline'
           git push origin HEAD:main
           gh api -X POST "repos/$GITHUB_REPOSITORY/pages/builds"
