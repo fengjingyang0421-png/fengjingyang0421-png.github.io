@@ -165,7 +165,7 @@ function voiceRank(v){
 function speakingText(text){
   return text.replace(/<br\s*\/?\s*>/gi,'，').replace(/<[^>]*>/g,'')
     .replace(/[（(]\s*[）)]|[＿_]{2,}/g,'')
-    .replace(/(\d+)\s*\/\s*(\d+)/g,'$2分之$1')
+    .replace(/(?<![A-Za-z\d－-])(\d+)\s*\/\s*(\d+)(?![A-Za-z\d])/g,'$2分之$1')
     .replace(/(\d+(?:\.\d+)?)\s*%/g,'百分之$1')
     .replace(/(\d)\s*(mm|cm|m)[²2](?![A-Za-z0-9])/g,(_,n,u)=>n+'平方'+({mm:'毫米',cm:'厘米',m:'米'})[u])
     .replace(/(\d)\s*m[\/／]s(?![A-Za-z])/g,'$1米每秒')
@@ -286,7 +286,7 @@ function stopRecording(){
   if(recordingCancel){recordingCancel();recordingCancel=null;}
 }
 
-function narration(q){
+function narration(q,markChoice=false){
   const parts = ['第 '+q.id+' 题。',q.stem];
   if(q.type.includes('判断')){
     parts.push('请判断这句话对不对。');
@@ -303,7 +303,8 @@ function narration(q){
   const choice=letters[answerIndex];
   const answerText=q.options[answerIndex];
   const imageAnswer=!judge&&(q.optionImages?.[answerIndex]||!answerText||answerText===choice||answerText==='选项'+choice);
-  const correctContent=imageAnswer?choice+' 图':answerText;
+  const spokenChoice=markChoice&&choice?' zzpick'+choice.toLowerCase()+'zz ':choice;
+  const correctContent=imageAnswer?spokenChoice+' 图':[spokenChoice,answerText].filter(Boolean).join(' ');
   const blank=/[（(]\s*[）)]|[＿_]{2,}/g;
   let spokenQuestion=q.stem;
   if(judge){
@@ -315,7 +316,7 @@ function narration(q){
   }
   const note=explanation(q);
   return {
-    stem:speakingText(spokenQuestion).replace(/。{2,}/g,'。'),
+    stem:speakingText('第'+q.id+'题，'+spokenQuestion).replace(/。{2,}/g,'。'),
     question:speakingText(parts.join('。')).replace(/。{2,}/g,'。'),
     answer:judge?speakingText(q.options[answerIndex]):speakingText('选 '+choice+'。'),
     detail:note?speakingText('来看解析。'+note.replace(/^[A-F][。．.、]\s*/,'')):''
@@ -352,7 +353,7 @@ function playNarration(q,kinds,hooks={},mode=state.settings.voiceMode){
     clearHandlers();
     const kind=tracks[index];
     if(kind==='detail'&&!q.explanation&&!extras.has(q.id)){useSystemVoice();return;}
-    const source=kind==='stem'?'./voice-inline/'+q.id+'.mp3'
+    const source=kind==='stem'?'./voice-numbered/'+q.id+'.mp3'
       : kind==='answer'&&q.type.includes('判断')
         ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'
         : recordingBase+q.id+'-'+kind+'.mp3';
@@ -572,7 +573,7 @@ function listenView(){
 }
 
 function render(){
-  const head='<div class="section-head"><h1>听题模式</h1><p>直接听带答案的题目，读完 1 秒后自动播放下一题。</p></div>';
+  const head='<div class="section-head"><h1>听题模式</h1><p>先报题号，正确选项和答案随题干一起读。读完 1 秒后自动播放下一题。</p></div>';
   const alert=storageMessage?'<p class="notice">'+escapeHtml(storageMessage)+'</p>':'';
   app.innerHTML=alert+head+listenView();
 }
