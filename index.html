@@ -340,8 +340,8 @@ function playNarration(q,kinds,hooks={},mode=state.settings.voiceMode){
     const kind=tracks[index];
     if(kind==='detail'&&!q.explanation&&!extras.has(q.id)){useSystemVoice();return;}
     const source=kind==='answer'&&q.type.includes('判断')
-      ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3'
-      : recordingBase+q.id+'-'+kind+'.mp3'+(kind==='stem'?'?v=filled-1':'');
+      ? recordingBase+'judgement-'+(script.answer==='正确'?'right':'wrong')+'.mp3?v=warm-2'
+      : recordingBase+q.id+'-'+kind+'.mp3'+(kind==='stem'?'?v=warm-2':'');
     announceSpeech('正在加载自然普通话…');
     const watch=()=>{clearTimer();timer=window.setTimeout(useSystemVoice,12000);};
     player.onwaiting=watch;
