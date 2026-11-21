@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f3f6fc">
+<title>低压电工 · 视频讲题</title>
+<link rel="stylesheet" href="./player.css">
+<script src="./player.js" defer></script>
+<header>
+  <div class="masthead">
+    <a class="back" href="../">← 听题模式</a>
+    <span>低压电工</span>
+  </div>
+</header>
+<main>
+  <h1>视频讲题</h1>
+  <div class="lesson">
+    <div class="screen" id="screen">
+      <div class="stage">
+        <video id="video" playsinline preload="metadata" controls poster="./classroom.jpg" aria-label="低压电工黑板讲题视频"><a href="../">返回听题模式</a></video>
+        <button id="start" class="start" type="button" disabled><span aria-hidden="true">▶</span> 横屏全屏播放</button>
+        <button class="exit" id="exit" type="button" aria-label="退出全屏">退出全屏</button>
+      </div>
+    </div>
+    <div class="panel">
+      <p class="position" id="position">正在载入题库…</p>
+      <div class="actions">
+        <button id="previous" type="button" disabled>上一题</button>
+        <button id="replay" type="button" disabled>重播本题</button>
+        <button id="next" type="button" disabled>下一题</button>
+        <button id="fullscreen" type="button" disabled>横屏全屏</button>
+      </div>
+      <form id="jump">
+        <label for="number">跳到第几题</label>
+        <input id="number" type="number" inputmode="numeric" min="1" max="1307" step="1" value="1" required disabled>
+        <button id="jump-button" type="submit" disabled>跳转</button>
+      </form>
+      <p id="notice" class="notice" role="status"></p>
+    </div>
+  </div>
+</main>
+</html>
